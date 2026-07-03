@@ -1,9 +1,10 @@
-#!/usr/bin/python3
+#!/Users/Raksha_1/anaconda3/envs/shark/bin/python
 # This script constructs primers for multiplex NGS panels
 
 import argparse
 import re
 import os
+import pickle
 import sys
 import math
 import random
@@ -15,6 +16,8 @@ import numpy
 import statistics as stat
 from copy import deepcopy
 from multiprocessing.pool import ThreadPool
+import multiprocessing
+multiprocessing.set_start_method('fork', force=True)
 from multiprocessing import Pool
 from Bio import SeqIO,Seq,pairwise2
 import subprocess as sp
@@ -392,7 +395,7 @@ def createPrimer3_parameters(pointRegions,args,refFa,
                     regionSeq=extractGenomeSeq(refFa,args.wholeGenomeRef,
                                                chromName,max(1,start-args.maxAmplLen),end+args.maxAmplLen)
                     seqTags['SEQUENCE_TEMPLATE']=str(regionSeq)
-                    if start==prevEnd+1:                    
+                    if start==prevEnd+1:
                         primerPairOkRegion=[[args.maxAmplLen-args.maxPrimerLen-2,args.maxPrimerLen+2,
                                              args.maxAmplLen+1+end-start,len(regionSeq)-args.maxAmplLen-1-(end-start)]]
                         seqTags['SEQUENCE_PRIMER_PAIR_OK_REGION_LIST']=primerPairOkRegion
@@ -605,7 +608,7 @@ def constructInternalPrimers(primer3Params,regionNameToChrom,
     print(' # Total number of different constructed primers:',totalDifPrimersNum)
     logger.info(' # Total number of constructed primers: '+str(totalPrimersNum))
     logger.info(' # Total number of different constructed primers: '+str(totalDifPrimersNum))
-    return(primersInfo,primersInfoByChrom,amplNames,primersToAmplNames,regionsCoords,regionNameToChrom,allRegions)    
+    return(primersInfo,primersInfoByChrom,amplNames,primersToAmplNames,regionsCoords,regionNameToChrom,allRegions)
 
 def runPrimer3(poolArgs):
     regionName,inputParams,extPrimer,args=poolArgs
@@ -1450,7 +1453,7 @@ def checkPrimersSpecificity(inputFileBase,primersInfo,primersToAmplNames,
                             maxPrimerNonspec=1000,
                             external=False,varNum='',blastNum=1):
     # Dictionary for storing info about primers specificity by primers
-    ## for checking specificity within one amplicon    
+    ## for checking specificity within one amplicon
     primersNonSpecRegions={}
     # Dictionary for storing info about primers specificity by chromosome
     ## for checking specificity within one multiplex
@@ -1465,9 +1468,9 @@ def checkPrimersSpecificity(inputFileBase,primersInfo,primersToAmplNames,
         for j,primer in enumerate(primers):
             if primer!='' and primer not in primersNonSpecRegions.keys():
                 seqFile.write('\n'.join(['>'+primer,primer])+'\n')
-                primersNonSpecRegions[primer]=None   
+                primersNonSpecRegions[primer]=None
             elif primer not in primersNonSpecRegions.keys():
-                primersNonSpecRegions[primer]=None                
+                primersNonSpecRegions[primer]=None
     seqFile.close()
     if external:
         bwaResultFileName=inputFileBase+runName+'_all_external_primers'+varNum+'_sequences.bwa'
@@ -1610,7 +1613,7 @@ def checkPrimersSpecificity(inputFileBase,primersInfo,primersToAmplNames,
                 for chrRegions in regions2.values():
                     totalNonspecRegionsForPrimer2+=len(chrRegions)
             elif regions1!=None and regions2!=None:
-                # We go through only one of dict because we are going to search nonspecific amplicons only 
+                # We go through only one of dict because we are going to search nonspecific amplicons only
                 ## on chromosomes that are presented in both dicts
                 for chrom,chrRegions in regions1.items():
                     totalNonspecRegionsForPrimer1+=len(chrRegions)
@@ -1660,13 +1663,16 @@ def checkPrimersSpecificity(inputFileBase,primersInfo,primersToAmplNames,
             specificPrimers.append(primerPair)
         wsw_spec.write_row(rowNum,0,[primerName1,totalNonspecRegionsForPrimer1])
         wsw_spec.write_row(rowNum+1,0,[primerName2,totalNonspecRegionsForPrimer2])
-        rowNum+=2 
+        rowNum+=2
     wbw_spec.close()
     # each element of specificPrimers has a format: primerSeq1_primerSeq2
     return(specificPrimers,primersNonSpecRegionsByChrs)
 
 def readBwaFile(read,maxPrimerNonspec,refFa,
                 wholeGenomeRef,primersInfo=None):
+    # Open a fresh handle per worker — forked processes share the parent's fd,
+    # causing concurrent seek races that corrupt reads.
+    refFa=pysam.FastaFile(wholeGenomeRef)
     indelsPat=re.compile('(\d+)([ID])')
     matchPat=re.compile('(\d+)M')
     # Extract strand of the main match in genome
@@ -1739,6 +1745,9 @@ def readBwaFile(read,maxPrimerNonspec,refFa,
             continue
         seq=extractGenomeSeq(refFa,wholeGenomeRef,
                              chrom,abs(int(pos)),abs(int(pos))+regionLen-1)
+        # Skip alignments at scaffold ends where full region cannot be retrieved
+        if seq is None:
+            continue
         # Determine, which sequence we should take: forward or reverse-complement
         ## If primer is on + strand and found region is on opposite
         ### or primer is on - strand and found region is on the same
@@ -1950,7 +1959,7 @@ def analyzePrimersForCrossingSNP(primersInfo,threads,
             primerPairsNonCoveringSNPs.append(primers)
     print("\n # Number of primers that do not overlap with high-frequent SNPs: "+str(len(primerPairsNonCoveringSNPs)))
     logger.info("\n # Number of primers that do not overlap with high-frequent SNPs: "+str(len(primerPairsNonCoveringSNPs)))
-    return(primerPairsNonCoveringSNPs,primersCoveringSNPs)    
+    return(primerPairsNonCoveringSNPs,primersCoveringSNPs)
 
 # checkPrimerForCrossingSNP checks, if primer crosses some SNPs with high frequence in population
 def checkPrimerForCrossingSNP(poolArgs):
@@ -2143,7 +2152,7 @@ def joinAmpliconsToBlocks(poolArgs):
                 primerPairPairsFormingDimers[primerPairName1].add(primerPairName2)
             if (not lastMut and
                 amplBlockStart2<=nextMut<=amplBlockEnd2 and
-                 amplBlockEnd1<amplBlockStart2+args.maxoverlap):                
+                 amplBlockEnd1<amplBlockStart2+args.maxoverlap):
                 if not mayFormDimer:
                     # Calculate weight of this edge - distance between amplicons
                     weight=maxAmplLen-min(50,primers2[0][0]-primers1[1][0]) # if distance is too large (>50), leave it as 50
@@ -2161,6 +2170,10 @@ def joinAmpliconsToBlocks(poolArgs):
     leftGoodPrimers=[]
     for i,blockGraph in enumerate(blockGraphs):
         if firstNodes[i]==lastNodes[i]:
+            if firstNodes[i] not in blockGraph or 'end' not in blockGraph:
+                print('WARNING: No primer pair spans SNP at position',firstNodes[i],'- skipping single-SNP block')
+                logger.warning('Skipping single-SNP block - node not in graph: '+str(firstNodes[i]))
+                continue
             try:
                 paths=tuple(nx.algorithms.shortest_paths.generic.all_shortest_paths(blockGraph,firstNodes[i],'end'))
             except KeyError:
@@ -2185,12 +2198,20 @@ def joinAmpliconsToBlocks(poolArgs):
                     continue
                 finalShortestPaths.append(path[1:-1])
         else:
+            if firstNodes[i] not in blockGraph or lastNodes[i] not in blockGraph:
+                print('WARNING: No primer pair spans SNP at position',firstNodes[i],'or',lastNodes[i],'- skipping block')
+                logger.warning('Skipping block - node not in graph: '+str(firstNodes[i])+' or '+str(lastNodes[i]))
+                continue
+            if not nx.has_path(blockGraph,firstNodes[i],lastNodes[i]):
+                print('WARNING: No path between SNP positions',firstNodes[i],'and',lastNodes[i],'- skipping block')
+                logger.warning('Skipping block - no path between: '+str(firstNodes[i])+' and '+str(lastNodes[i]))
+                continue
             tries=0
             nodeToPrimerDimers={}
             while(True):
                 try:
                     path=tuple(nx.algorithms.shortest_paths.generic.shortest_path(blockGraph,firstNodes[i],lastNodes[i]))
-                except nx.exception.NetworkXNoPath as e:
+                except (nx.exception.NetworkXNoPath) as e:
                     if len(nodeToPrimerDimers.keys())>0:
                         for blockGraph in blockGraphs:
                             for node in blockGraph.nodes():
@@ -2291,7 +2312,7 @@ def joinAmpliconsToBlocks(poolArgs):
                         break
                     if analysisNum>maxAnalysisVars:
                         break
-            except nx.NetworkXError:
+            except (nx.NetworkXError, nx.exception.NodeNotFound):
                 print('ERROR (67)! The following node is not in the graph:')
                 print(firstNodes[i],lastNodes[i])
                 print(blockGraph.nodes())
@@ -2656,7 +2677,7 @@ def sortAmpliconsToMultiplexes(globalMultiplexesContainer,globalMultiplexNums,ar
             for z,cl in enumerate(cls):
                 print('Number of amplicons in multiplex',mults[z],len(cl))
                 logger.warn('  # Number of amplicons in multiplex '+mults[z]+': '+str(len(cl)))
-            leftNodesGraph=deepcopy(localMultiplexNums)
+            leftNodesGraph=nx.Graph(localMultiplexNums)
             leftNodesGraph.remove_nodes_from(allSortedAmpls)
             print('  But the following '+str(len(leftNodesGraph.nodes()))+' amplicons could not be sorted to any of designed multiplex:')
             logger.warn('  But the following '+str(len(leftNodesGraph.nodes()))+' amplicons could not be sorted to any of designed multiplex:')
@@ -2688,7 +2709,7 @@ def sortAmpliconsToMultiplexes(globalMultiplexesContainer,globalMultiplexNums,ar
 ## primers is a list of two primers and their amplicon coordinates [primer1, primer2, amplStart, amplEnd]
 ## nums are numbers of multiplexes to which we try to put new primer
 ## globalMultiplexNums are lists of multiplexes with primers and their amplicon coordinates [primer1, primer2, amplStart, amplEnd]
-## unspecificPrimers is a list of primer pairs that form unspecific products 
+## unspecificPrimers is a list of primer pairs that form unspecific products
 def checkPrimersFit(primers,primersToCompare,
                     minmultdimerdg1=-6,minmultdimerdg2=-10,
                     maxIntersectionOfPrimers=5,
@@ -2858,7 +2879,7 @@ def calcThreeStrikeEndHairpin(seq,
             # Extend end3
             end3=seq[-(nucs+extension):]
             if end3 not in seq_rc[len(end3)+minLoop:]:
-                # We do not remove 1st nucleotide because later 
+                # We do not remove 1st nucleotide because later
                 # it will be necessary for dimer dG estimation
                 break
         # Extract rev-compl sequence for it
@@ -2886,13 +2907,16 @@ def extractGenomeSeq(refFa,wholeGenomeRef,
     while(seq is None):
         try:
             seq=refFa.fetch(region=chromName+':'+str(start)+'-'+str(end))
+            # pysam returns empty string (not exception) when coords exceed scaffold end
+            if len(seq)<2:
+                return(None)
         except:
             seq=None
             attempts+=1
             # If there are some problems with getting regions seq,
             # re-open whole genome reference file
             refFa=pysam.FastaFile(wholeGenomeRef)
-            if attempts>=10:                    
+            if attempts>=10:
                 print('ERROR: could not extract genome sequence!',)
                 logger.error('Could not extract genome sequence!')
                 print(refFa.filename)
@@ -3346,7 +3370,7 @@ if args.primersFile:
                 globalMultiplexesContainer[num]=[amplName]
             else:
                 globalMultiplexesContainer[num].append(amplName)
-            # We choose multiplex all of previously added primers that fit 
+            # We choose multiplex all of previously added primers that fit
             # Get input region name that current amplicon covers
             if len(globalMultiplexNums)>0:
                 for node in globalMultiplexNums.nodes():
@@ -3463,7 +3487,7 @@ if args.primersFile:
     writeDraftPrimers(extPrimersInfo,
                       args.regionsFile[:-4]+'_all_draft_primers.xls',
                       external=True)
-    # Analyzing external primers specificity        
+    # Analyzing external primers specificity
     if args.doBlast:
         print('\nAnalyzing external primers for their specificity...')
         logger.info('Analyzing external primers for their specificity...')
@@ -3618,7 +3642,7 @@ if args.primersFile:
                 for z,cl in enumerate(cls):
                     print('Number of amplicons in multiplex',mults[z],len(cl))
                     logger.warn('  # Number of amplicons in multiplex '+mults[z]+': '+str(len(cl)))
-                leftNodesGraph=deepcopy(localMultiplexNums)
+                leftNodesGraph=nx.Graph(localMultiplexNums)
                 leftNodesGraph.remove_nodes_from(allSortedAmpls)
                 print('  But the following '+str(len(leftNodesGraph.nodes()))+' amplicons could not be sorted to any of designed multiplex:')
                 logger.warn('  But the following '+str(len(leftNodesGraph.nodes()))+' amplicons could not be sorted to any of designed multiplex:')
@@ -3701,7 +3725,7 @@ else:
         specificPrimers,primersNonSpecRegionsByChrs=checkPrimersSpecificity(args.regionsFile[:-4],primersInfo,primersToAmplNames,
                                                                             args.wholeGenomeRef,args.runName,refFa,
                                                                             args.substNum,args.threads,args.gui,
-                                                                            args.maxNonSpecLen,args.maxPrimerNonspec,False,'',args.blastNum)    
+                                                                            args.maxNonSpecLen,args.maxPrimerNonspec,False,'',args.blastNum)
         print(' # Number of specific primer pairs:',len(specificPrimers))
         logger.info(' # Number of specific primer pairs: '+str(len(specificPrimers)))
         # Now we need to remove all unspecific primers from constructed primer pairs
@@ -3769,19 +3793,17 @@ else:
                              primersInfoByChrom[chromInt],primersInfo,
                              args.maxAmplLen,args.optPrimerLen,
 			     chromInt,args.returnVariantsNum,
-                             args))        
+                             args))
 ##            results.append(p.apply_async(joinAmpliconsToBlocks,(sorted(regionsCoords[chromInt]),
 ##                                                                primersInfoByChrom[chromInt],
 ##                                                                args.maxAmplLen,chromInt,
 ##                                                                args.returnVariantsNum)))
         except KeyError:
-            print('ERROR (60)! The following chromosome does not covered by any primer pair:')
-            logger.error('(60)  The following chromosome does not covered by any primer pair:')
+            print('WARNING! The following chromosome is not covered by any primer pair after filtering and will be skipped:')
             print('Chromosome as number: '+str(chromInt))
             print('Chromosome as string: '+chrom)
-            logger.error('Chromosome as number: '+str(chromInt))
-            logger.error('Chromosome as string: '+str(chrom))
-            exit(60)
+            logger.warning('Chromosome '+str(chrom)+' ('+str(chromInt)+') has no primer pairs after filtering - skipping')
+            continue
         wholeWork+=1
     doneWork=0
 ##    wholeWork=len(results)
@@ -3881,7 +3903,7 @@ else:
         # Converts primer pair sequences to output amplicon name
         primerPairSeqsToOutputName={}
         # Converts numerical amplicon name to primer pair sequences
-        numAmplNameToPrimerPair={}        
+        numAmplNameToPrimerPair={}
         # Chromosome in combination is chromosome number but in string format
         for chromIntStr,coords in sorted(comb.items(),
                                          key=lambda item:int(item[0])):
@@ -3993,7 +4015,7 @@ else:
                         globalMultiplexesContainer[num]=[amplNamesToOutput[targetName][-1]]
                     else:
                         globalMultiplexesContainer[num].append(amplNamesToOutput[targetName][-1])
-                    # We choose multiplex all of previously added primers that fit 
+                    # We choose multiplex all of previously added primers that fit
                     # Get input region name that current amplicon covers
                     if len(globalMultiplexNums)>0:
                         currentGlobalMultiplexNums=deepcopy(globalMultiplexNums)
@@ -4219,7 +4241,7 @@ else:
             writeDraftPrimers(extPrimersInfo,
                               args.regionsFile[:-4]+'_all_draft_primers.xls',
                               external=True)
-            # Analyzing external primers specificity        
+            # Analyzing external primers specificity
             if args.doBlast:
                 print('\nAnalyzing external primers for their specificity...')
                 logger.info('Analyzing external primers for their specificity...')
